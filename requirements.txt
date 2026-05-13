@@ -1,0 +1,9 @@
+setuptools<71
+streamlit
+langchain-google-genai
+langgraph
+langchain
+pymilvus==2.4.12
+milvus-lite==2.4.12
+pymupdf
+python-dotenv
