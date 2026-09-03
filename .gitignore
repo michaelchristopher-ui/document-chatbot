@@ -6,5 +6,10 @@ __pycache__/
 .DS_Store
 *.db
 *.db.lock
+# Where the dev compose overlay puts the container's state.
+.data/
+# The interaction log runs in WAL mode, which keeps two sidecars beside the file.
+*.db-wal
+*.db-shm
 .claude/
 documents/*.pdf

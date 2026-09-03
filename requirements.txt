@@ -1,9 +1,36 @@
 setuptools<71
-streamlit
-langchain-google-genai
+# 1.36 is where `st.navigation`/`st.Page` arrived, which is how the chat and
+# statistics pages share one app.
+streamlit>=1.36
+langchain-openai
 langgraph
 langchain
-pymilvus==2.4.12
-milvus-lite==2.4.12
+# Imported directly by `adapters.outbound.splitters.langchain`. Declared
+# rather than left to `langchain` to pull in: it no longer does as of 1.x,
+# so a fresh install stopped having it while existing venvs kept it.
+langchain-text-splitters
 pymupdf
 python-dotenv
+# Pinned below 2.0: `MinHash(hashvalues=…)` gained a required `scheme`
+# argument there, so `domain.dedup.deserialize_signature` raises on every
+# signature already in `catalog.db` — all of which were written by 1.10.
+# Unpinned, a fresh install silently resolves 2.x and every ingest fails on
+# the first document an earlier run had indexed. Moving up means passing the
+# scheme explicitly on both sides of serialize/deserialize, and agreeing on
+# one for the stored signatures; it is not a version bump on its own.
+datasketch<2
+rank-bm25
+
+# Vector backend — needed only for VECTOR_BACKEND=milvus (the default). The
+# `memory` backend needs nothing; a future backend adds its SDK here.
+pymilvus==2.4.12
+milvus-lite==2.4.12
+
+# Answer cache. A tag archive rather than `git+https://`, so the image needs no
+# git binary; swap the URL for `git+https://github.com/michaelchristopher-ui/\
+# semantic-cache@v0.1.1` if you would rather pin a commit. Pinned either way —
+# a moving `main` is cached by pip against the same URL and gives stale builds.
+#
+# Only used when REDIS_URL is set; unset, nothing here is imported at runtime
+# beyond the composition root's `if`.
+semantic-cache[redis] @ https://github.com/michaelchristopher-ui/semantic-cache/archive/refs/tags/v0.1.1.tar.gz

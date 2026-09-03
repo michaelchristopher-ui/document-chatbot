@@ -1,0 +1,5 @@
+# Pins the theme rather than following the browser's preference: the app is one
+# look for everyone who opens it, and dark is what the charts, tables and
+# citation markers are read against.
+[theme]
+base = "dark"

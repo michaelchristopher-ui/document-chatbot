@@ -1,0 +1,38 @@
+# Development overlay. Same image, three differences: the source comes from the
+# working tree instead of the image, the state lands somewhere you can open with
+# `sqlite3`, and nothing restarts itself when it dies.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Deliberately not named docker-compose.override.yml, which compose would apply
+# to every `docker compose up` including the one on the server. Having to name
+# it is the point.
+services:
+  app:
+    # A crash should stop and show you the traceback, not loop behind a
+    # restart policy while you read stale logs.
+    restart: "no"
+
+    environment:
+      # Streamlit reruns the script when a file it imported changes. In a
+      # container reading a bind mount, inotify events from the host often do
+      # not arrive at all, so the watcher polls instead — the cost is a stat
+      # loop, and without it the bind mount below buys you nothing.
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: poll
+      STREAMLIT_SERVER_RUN_ON_SAVE: "true"
+
+    volumes:
+      # The working tree over the image's copy, so an edit is a save rather
+      # than a rebuild. `pip install` still lives in the image: change
+      # requirements.txt and you do need `--build`.
+      - .:/app
+
+      # State on the host instead of the named volume, replacing that mount by
+      # targeting the same path. Bind-mounted so `sqlite3 .data/analytics.db`
+      # works from the host — which is most of the reason to reach for this
+      # file at all.
+      #
+      # Written by uid 1000 inside the container. Docker Desktop and OrbStack
+      # translate that to you; on native Linux, `chown 1000 .data` first or the
+      # first write fails.
+      - ./.data:/data

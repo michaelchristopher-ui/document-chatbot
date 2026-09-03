@@ -1,0 +1,107 @@
+# Two services and two volumes. `chatbot.db`, `catalog.db` and `analytics.db`
+# are embedded files rather than servers, so the app needs no database
+# container; Redis is here because the answer cache does need one, and because
+# a deployment that uses this middleware has to bring its own — there is no
+# shared instance to point at. Which topology it is comes down to what LLM_BASE_URL resolves
+# to; see docs/DEPLOY.md for the cases, and for why vMLX is never a service here.
+#
+# For development, add the dev overlay — it bind-mounts the source and puts the
+# state where you can read it:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  app:
+    build: .
+    image: document-chatbot:latest
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      # Which server answers, and where it is. The only two settings that
+      # change between deployments.
+      LLM_BACKEND: ${LLM_BACKEND:-vmlx}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8000/v1}
+
+      # Naming all three is what puts the app in server mode: it seeds the
+      # setup screen's answers from here and comes up ready to answer. See
+      # `config.preconfigured`.
+      #
+      # Leave them unset and the container serves the setup screen instead,
+      # exactly as `streamlit run app.py` does — which is what you want when
+      # the reason you are running this in Docker is to develop it. Optional
+      # rather than required for that reason: one file, both jobs.
+      CHAT_MODEL: ${CHAT_MODEL:-}
+      OCR_MODEL: ${OCR_MODEL:-}
+      EMBED_MODEL: ${EMBED_MODEL:-}
+
+      # Only consulted in server mode; the setup screen picks these itself.
+      RERANKER_MODEL: ${RERANKER_MODEL:-}
+      JUDGE_MODEL: ${JUDGE_MODEL:-}
+      CHUNKING_STRATEGY: ${CHUNKING_STRATEGY:-recursive}
+
+      # The answer cache, which exists because this is set. `redis` is the
+      # service below, reachable by name on the compose network; the app
+      # degrades to answering every question the long way round if it is
+      # unreachable, so this is a performance setting rather than a dependency.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ANSWER_CACHE_THRESHOLD: ${ANSWER_CACHE_THRESHOLD:-0.92}
+      ANSWER_CACHE_TTL_SECONDS: ${ANSWER_CACHE_TTL_SECONDS:-3600}
+
+      # Bearer tokens for a server started with --api-key. Unset is fine for
+      # one on a private network; see docs/DEPLOY.md on why that is a choice
+      # rather than a default.
+      VMLX_API_KEY: ${VMLX_API_KEY:-}
+      LLAMA_API_KEY: ${LLAMA_API_KEY:-}
+    volumes:
+      # Documents in, index and history out. Read-only on the way in because
+      # `FilesystemDocuments` never writes back — the app reads these and
+      # records what it made of them beside, not among, them.
+      #
+      # Its own name, deliberately not DOCUMENTS_DIR: this is the path on the
+      # *host*, while DOCUMENTS_DIR is the path the app reads *inside* the
+      # container, which the image already fixes at /data/documents. One name
+      # for both would break the moment anyone added `env_file: .env` here.
+      - ${DOCUMENTS_HOST_DIR:-./documents}:/data/documents:ro
+      - chatbot-data:/data
+    depends_on:
+      # `service_healthy` rather than `service_started`: the app builds its
+      # cache in the composition root and pings Redis on the first lookup, and
+      # a refused connection there is a cold cache for the rest of the process.
+      # Not `required: false` — if Redis is in the file it is meant to be up.
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      # How a container reaches a server on the host it is running on — which
+      # is the only way to reach vMLX, since MLX needs the Mac's GPU directly
+      # and cannot be containerised. Native on Docker Desktop; this line is
+      # what makes the same name work on Linux.
+      - "host.docker.internal:host-gateway"
+
+  # Cached answers, and nothing else. Deleting this volume costs the model
+  # calls needed to answer the next question of each kind again and nothing
+  # more — every entry in it is derived from the index and the models.
+  #
+  # `--maxmemory-policy allkeys-lru` so a Redis that fills up evicts the
+  # least-used answers instead of refusing writes: the cache has a TTL on every
+  # key, but a burst of questions inside one TTL window is what actually decides
+  # how large this gets, and dropping the coldest answer is always the right
+  # response to running out of room.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - "3600 1"
+      - --maxmemory-policy
+      - allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  chatbot-data:
+  redis-data:
