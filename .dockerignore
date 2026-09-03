@@ -6,7 +6,6 @@ __pycache__/
 *.pyo
 .DS_Store
 .vscode/
-.claude/
 # Local state. The deployed app keeps its own on a volume, and baking a
 # developer's index into the image would ship their documents with it.
 *.db

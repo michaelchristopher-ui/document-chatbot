@@ -11,5 +11,4 @@ __pycache__/
 # The interaction log runs in WAL mode, which keeps two sidecars beside the file.
 *.db-wal
 *.db-shm
-.claude/
 documents/*.pdf
