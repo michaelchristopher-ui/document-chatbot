@@ -176,12 +176,18 @@ LLAMA_CPP_MODELS = Recommendations(
         catalog_id="ggml-org/embeddinggemma-300M-GGUF",
         download_id="ggml-org/embeddinggemma-300M-GGUF",
     ),
-    # The reason to point anything here: 38M parameters, ~75 MB, and it is the
-    # one llama.cpp's own tests rerank with, so it loads on whatever build is
-    # installed. Bigger cross-encoders (bge-reranker-v2-m3, jina-reranker-v2)
-    # serve the same route and cost more per call — this is the one that can sit
-    # beside a resident chat model on a machine already sized without slack.
-    rerank="ggml-org/jina-reranker-v1-turbo-en-GGUF",
+    # The reason to point anything here. ~568M parameters and ~1.2 GB, which is
+    # more than the 38M jina-reranker-v1-turbo this used to name — and worth it,
+    # because the small one does not separate passages enough to reorder them
+    # usefully. On the same query and passages, turbo scored -0.062 / -0.090 /
+    # -0.093 and put an unrelated passage above a related one; this scored
+    # -2.79 / -10.49 / -10.73 and got the order right. A reranker whose scores
+    # sit inside a 0.03 band is a model call spent to keep RRF's order.
+    #
+    # It is a cross-encoder, so it only ever runs over the fused 50 a search
+    # already narrowed to — not the corpus — and it costs nothing until a
+    # question is asked. Multilingual, unlike turbo, which is English-only.
+    rerank="gpustack/bge-reranker-v2-m3-GGUF",
 )
 
 BACKENDS: dict[str, Backend] = {

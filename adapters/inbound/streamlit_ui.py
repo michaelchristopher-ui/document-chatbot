@@ -16,6 +16,7 @@ from adapters.inbound.constants import (
     CITATION_STYLE,
     CONFIDENCE_DOTS,
     CONFIG_KEYS,
+    RECONFIGURE_KEY,
     SESSION_KEYS,
     STRATEGIES,
     TOOLTIP_CHARS,
@@ -545,7 +546,20 @@ def _render_setup() -> None:
         disabled=not catalog.online,
     ):
         runtime = build_model_runtime(backend_name, base_url)
-        configured = {chat_model, ocr_model, embed_model, reranker_model} - {""}
+        # Which models this app *addresses* is the reader's choice; which models
+        # the server is *holding* is not, once an environment configured this
+        # run. That is the rule `_load` already follows, and reaching this screen
+        # through "Change models" does not change who operates the server — so
+        # in that case the selections are recorded and residency is left alone.
+        # It costs little in practice: LM Studio's just-in-time loading brings a
+        # named model up on first use, and a backend that binds its models at
+        # startup was never going to swap them anyway.
+        manages_residency = not preconfigured()
+        configured = (
+            {chat_model, ocr_model, embed_model, reranker_model} - {""}
+            if manages_residency
+            else set()
+        )
         # What the ingest on the far side of this button actually calls, which
         # is not everything chosen above: nothing asks the chat or reranker
         # model anything until a question is typed, and by then the ingest is
@@ -554,17 +568,26 @@ def _render_setup() -> None:
         # model would otherwise be sitting on.
         ingesting = {ocr_model, embed_model} - {""}
 
-        # Reclaim memory first: whatever else the backend is holding — another
-        # app's model, or a duplicate instance left by an earlier run of this
-        # one — is competing with the models below for a budget `config` sizes
-        # with no slack. Advisory, since a failure here still often loads fine,
-        # and nothing at all where the backend binds its models at startup.
-        with st.spinner(f"Unloading other models from {server.label}…"):
-            unload_error = runtime.unload_others(ingesting)
-        if unload_error:
-            st.warning(f"Could not unload other models — {unload_error}")
-
         errors = []
+
+        if not manages_residency:
+            st.caption(
+                "This run was configured from the environment, so models are "
+                "selected here but not loaded or unloaded — whoever runs the "
+                "inference server owns what is resident on it."
+            )
+        else:
+            # Reclaim memory first: whatever else the backend is holding —
+            # another app's model, or a duplicate instance left by an earlier run
+            # of this one — is competing with the models below for a budget
+            # `config` sizes with no slack. Advisory, since a failure here still
+            # often loads fine, and nothing at all where the backend binds its
+            # models at startup.
+            with st.spinner(f"Unloading other models from {server.label}…"):
+                unload_error = runtime.unload_others(ingesting)
+            if unload_error:
+                st.warning(f"Could not unload other models — {unload_error}")
+
         for model_id in configured:
             # Fetched now even when it is loaded later: a download is minutes
             # of network, and this screen is where a wait of that size belongs.
@@ -596,6 +619,10 @@ def _render_setup() -> None:
         # The backend loads it on the first judge request instead.
         st.session_state.judge_model = judge_model
         st.session_state.chunking_strategy = strategy
+        # The screen has been answered, so stop forcing it. Popped rather than
+        # set False so the flag exists only while it is true, which is what
+        # `_configured` and the gate in `main` both read it as.
+        st.session_state.pop(RECONFIGURE_KEY, None)
         st.rerun()
 
 
@@ -666,6 +693,12 @@ def _render_sidebar(
         if st.button("Change models"):
             for key in SESSION_KEYS:
                 st.session_state.pop(key, None)
+            # Set after the loop, not before: `SESSION_KEYS` is what the loop
+            # clears, and this flag has to outlive it. Clearing state is enough
+            # on its own only when nothing else can answer the setup screen's
+            # questions — in a preconfigured run the environment can, and
+            # `main` would re-seed from it and land straight back here.
+            st.session_state[RECONFIGURE_KEY] = True
             st.rerun()
 
 
@@ -920,7 +953,14 @@ def main() -> None:
         # from the environment it seeds the same session state that screen would
         # have written and carries straight on; otherwise the screen still runs,
         # which is the interactive case and stays unchanged.
-        if not preconfigured():
+        #
+        # Unless it was *asked* for. "Change models" clears session state, and
+        # in a preconfigured run that is not enough on its own: the environment
+        # answers the same questions again and this seeds straight past the
+        # screen, so the button reads as broken. The flag is what separates
+        # "never configured" from "configured, and the reader wants to choose
+        # again" — the environment stays the default, not a lock.
+        if not preconfigured() or st.session_state.get(RECONFIGURE_KEY):
             _render_setup()
             st.stop()
         _seed_from_env()

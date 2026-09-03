@@ -25,6 +25,7 @@ from constants import (
     DEFAULT_VECTOR_BACKEND,
     DEFAULT_VECTOR_COLLECTION,
     DEFAULT_VECTOR_URI,
+    LLAMA_CPP,
     NONE,
     Backend,
     RecommendedModel,
@@ -98,6 +99,37 @@ def selected_base_url() -> str:
     return _env("LLM_BASE_URL", "") or backend(selected_backend()).base_url
 
 
+def default_rerank_backend() -> str:
+    """Where reranking goes when nothing named a backend for it.
+
+    Empty — meaning "the main backend answers for it too" — whenever that
+    backend recommends a reranker of its own. vMLX does, on the server already
+    answering everything else, and sending that to a second process would cost a
+    model load for nothing.
+
+    `LLAMA_CPP` when it does not. LM Studio serves no `/rerank` route at all, so
+    left to itself reranking is not merely unconfigured but silently off: the
+    fused RRF order becomes the final order and no cross-encoder ever runs.
+    Defaulting here is what makes a reranker part of the ordinary setup rather
+    than something to find out about — and llama.cpp is the backend that can be
+    run for the reranker alone, one process holding one small model on a port of
+    its own, which is exactly the shape this needs.
+
+    Nothing here starts that process. A server that is not up costs a refused
+    connection per search and the RRF order stands, which is the documented
+    degradation — reranking is precision, not the answer.
+
+    `RERANKER_MODEL=none` is the way to decline it, and the only one: `_env`
+    reads an empty variable as unset, deliberately, so `RERANK_BACKEND=` falls
+    back here rather than meaning "nowhere". Naming no model leaves
+    `composition` building no reranker at all, which is the same state this used
+    to reach by accident.
+    """
+    if backend(selected_backend()).recommends.rerank:
+        return ""
+    return LLAMA_CPP
+
+
 def selected_rerank_backend() -> str:
     """Which backend will be asked to rerank — the main one unless redirected.
 
@@ -105,7 +137,7 @@ def selected_rerank_backend() -> str:
     backend may serve nothing for, and then it answers on a second server: the
     models to offer for it are that server's, not this one's.
     """
-    name = _env("RERANK_BACKEND", "")
+    name = _env("RERANK_BACKEND", default_rerank_backend())
     if not name:
         return selected_backend()
     backend(name)
@@ -217,8 +249,12 @@ class Config:
     # to serve nothing for: LM Studio has no /rerank route at all, so a reranker
     # there means a second server beside it — a vMLX on :8000 is one this app
     # already knows how to talk to. Empty means the one provider answers for
-    # everything, which is the ordinary case.
-    rerank_backend: str = field(default_factory=lambda: _env("RERANK_BACKEND", ""))
+    # everything, which is what a backend serving its own reranker resolves to.
+    # See `default_rerank_backend` for why a backend that serves none does not
+    # default to empty: that is reranking silently off rather than declined.
+    rerank_backend: str = field(
+        default_factory=lambda: _env("RERANK_BACKEND", default_rerank_backend())
+    )
     rerank_base_url: str = field(default_factory=lambda: _env("RERANK_BASE_URL", ""))
 
     # Which vector store backs retrieval. Names come from

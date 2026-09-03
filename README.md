@@ -35,8 +35,10 @@ at, per document, per search arm and per configuration, instead of something you
     --rerank --port 1235`, on any platform. This is the engine LM Studio already embeds,
     run as the HTTP server LM Studio does not expose: `/v1/rerank` is a real llama.cpp
     route, reachable from `llama-server` and from nothing on port 1234. One process holds
-    one model, so it is normally started for the reranker alone and named as
-    `RERANK_BACKEND=llamacpp` beside an LM Studio doing everything else.
+    one model, so it is normally started for the reranker alone beside an LM Studio doing
+    everything else — and since LM Studio recommends no reranker, that is where reranking
+    is sent by default, with no `RERANK_BACKEND` to set. Not running one is not an error:
+    each search costs a refused connection and keeps its fused RRF order.
 - **Python 3.9+** (developed and verified against 3.9.6).
 - Roughly **12 GB of RAM** free. The recommended defaults are sized for it: ~5.5 GB chat
   model + ~0.7 GB embedder, leaving room for the KV cache that long RAG prompts need.
@@ -150,7 +152,7 @@ other is pointed at.
 | Chat | `qwen/qwen3-vl-8b` | Answers from retrieved passages |
 | OCR | same as chat | Reads pages with no text layer — **vision models only** |
 | Embeddings | `text-embedding-nomic-embed-text-v1.5` | Largest embedder that actually serves on LM Studio's engines |
-| Reranker | *off* | LM Studio serves no `/rerank` route — `RERANK_BACKEND=llamacpp` puts one beside it |
+| Reranker | `gpustack/bge-reranker-v2-m3-GGUF`, on llama.cpp | LM Studio serves no `/rerank` route, so reranking defaults to a llama.cpp on :1235 rather than to nothing — start one, or `RERANKER_MODEL=none` to decline |
 | Judge | *off* | Costs a second model call; opted into, from the Statistics page |
 
 **`LLM_BACKEND=vmlx`**
@@ -167,7 +169,7 @@ other is pointed at.
 
 | Role | Default | Why |
 |---|---|---|
-| Reranker | `ggml-org/jina-reranker-v1-turbo-en-GGUF` | 38M parameters, ~75 MB, and what llama.cpp's own tests rerank with, so it loads on whatever build is installed |
+| Reranker | `gpustack/bge-reranker-v2-m3-GGUF` | ~568M parameters, ~1.2 GB, multilingual. The 38M jina-turbo it replaced is cheaper but does not separate passages enough to reorder them: on one query it scored three passages -0.062 / -0.090 / -0.093 and ranked an unrelated one above a related one, where this scored -2.79 / -10.49 / -10.73 and got the order right |
 
 No table for the other three roles: one `llama-server` holds one model, fixed at launch,
 so a server doing chat is a server that cannot also embed or rerank. Reaching for it as a
@@ -175,10 +177,19 @@ whole `LLM_BACKEND` works and means three processes; the reason it is here is th
 route LM Studio cannot serve at all.
 
 ```bash
-llama-server -hf ggml-org/jina-reranker-v1-turbo-en-GGUF --rerank --port 1235
-# then, in .env:
-#   RERANK_BACKEND=llamacpp
+llama-server -hf gpustack/bge-reranker-v2-m3-GGUF --rerank --port 1235
+# Nothing to add to .env: a backend that recommends no reranker of its own
+# already sends reranking here, so with LM Studio this server is all that was
+# missing. `RERANKER_MODEL=none` declines it instead.
 ```
+
+**`RERANKER_MODEL` is advisory on this backend.** One `llama-server` holds one model,
+fixed at launch, and it answers `/v1/rerank` with that model whatever id the request
+names — no 404, no warning. So the id in the config is a *label* here, not a selector:
+whatever `-hf` named is what scores your passages. Start the wrong repo and the app will
+say it is reranking with the one you configured while a different cross-encoder does the
+work. Check with `curl -s localhost:1235/v1/models` rather than trusting the setting.
+(On vMLX the id *is* a selector — it loads by name on the first call and swaps.)
 
 `--rerank` is what mounts the route. Without it the server answers `501 This server does
 not support reranking` however good the cross-encoder it loaded — and the app degrades to
@@ -593,7 +604,7 @@ decides, as it always has; set the three required ones and it is skipped entirel
 | `JUDGE_MODEL` | *unset* | `none` is the same as unset here; scoring is opt-in |
 | `CHUNKING_STRATEGY` | `recursive` | `fixed`, `recursive` or `semantic` |
 | `DOCUMENTS_DIR` | `./documents` | Where the PDFs are read from; a mounted volume when deployed |
-| `RERANK_BACKEND` | *unset* | Rerank on a different backend from everything else |
+| `RERANK_BACKEND` | `llamacpp` when the main backend recommends no reranker, else *unset* | Rerank on a different backend from everything else |
 | `RERANK_BASE_URL` | *unset* | Rerank on a different server; either of these two alone is enough |
 | `VMLX_API_KEY` | *unset* | Bearer token, for a vMLX started with `--api-key` |
 | `LLAMA_API_KEY` | *unset* | Bearer token, for a `llama-server` started with `--api-key` |

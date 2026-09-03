@@ -13,6 +13,14 @@ CONFIG_KEYS = (
     "reranker_model", "judge_model", "chunking_strategy",
 )
 SESSION_KEYS = ("ready", *CONFIG_KEYS, "messages", "thread_id")
+# Set by "Change models", and deliberately *not* in `SESSION_KEYS` — that button
+# clears every key in there, so a flag listed among them would erase itself on
+# the way out. It says the setup screen was asked for rather than merely needed,
+# which is the difference between a session that has not been configured yet and
+# one an environment already answered for: without it, clearing session state in
+# a preconfigured run is re-seeded from that same environment on the next
+# rerun and the screen never appears.
+RECONFIGURE_KEY = "reconfigure"
 
 # A tooltip is a native `title`, so its width is the browser's to decide and its
 # line breaks are ours — hence the hard wrap.
